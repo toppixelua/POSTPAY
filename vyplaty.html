@@ -618,39 +618,65 @@ function extractArray(text) {
 
 // ── Parse single PDF ─────────────────────────────────────────────────────────
 async function parsePdf(file) {
-  const log = (msg) => { setProgress(msg, null); console.log(msg); };
-
-  log('Читаю файл...');
+  // Step 1: read as base64
+  setProgress('Читаю файл ' + file.name + '...', 20);
   const b64 = await new Promise((res, rej) => {
     const reader = new FileReader();
     reader.onload = e => res(e.target.result.split(',')[1]);
-    reader.onerror = e => rej(new Error('FileReader: ' + (e.target.error?.message || 'помилка')));
+    reader.onerror = () => rej(new Error('Не вдалось прочитати файл'));
     reader.readAsDataURL(file);
   });
-  log('Файл прочитано · ' + Math.round(b64.length * 0.75 / 1024) + ' KB · надсилаю до Claude...');
 
-  const P1_PROMPT = `Це відомість ПФУ на виплату пенсій (PDF документ). Зчитай всі рядки таблиці з УСІХ сторінок.
+  // Step 2: send to proxy -> Anthropic
+  setProgress('Надсилаю до Claude (' + Math.round(b64.length * 0.75 / 1024) + ' KB)...', 50);
 
-Поверни ТІЛЬКИ JSON без тексту навколо:
+  const key = getApiKey();
+  if (!key) throw new Error('API ключ не вказано');
+
+  const prompt = `Це відомість ПФУ на виплату пенсій. Зчитай всі рядки таблиці з УСІХ сторінок. Поверни ТІЛЬКИ JSON:
 {"vedomist_type":"99","period":"Червень 2026 01","dilinitsa":"50","rows":[{"name":"БАЛЕЦЬКИЙ ВОЛОДИМИР ПОРФИРІЙОВИЧ","address":"Сошичне, МИРУ, 94;;","sum":2301.28,"passport":"AC 000393421","pay_date":"04.06"}]}
-
 - vedomist_type: число з рядка "Тип виплати:"
-- dilinitsa: перший номер після назви села в рядку "Найменування виплатного об'єкта..."
+- dilinitsa: перший номер після назви села в рядку "Найменування виплатного об єкта..."
 - period: текст після слова "період"
-- name: ПІБ ВЕЛИКИМИ ЛІТЕРАМИ
-- address: адреса як є
-- sum: число
-- pay_date: дата DD.MM`;
+- name: ПІБ ВЕЛИКИМИ ЛІТЕРАМИ, address: адреса як є, sum: число, pay_date: DD.MM`;
 
-  const text = await askClaude(b64, 'application/pdf', P1_PROMPT);
-  log('Відповідь отримано · парсинг...');
+  let resp;
+  try {
+    resp = await fetch('https://postpay-proxy3.vercel.app/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+          { type: 'text', text: prompt }
+        ]}]
+      })
+    });
+  } catch(fetchErr) {
+    throw new Error('Мережева помилка: ' + fetchErr.message);
+  }
+
+  setProgress('Отримую відповідь...', 80);
+
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => '');
+    throw new Error('Проксі повернув ' + resp.status + ': ' + t.slice(0, 200));
+  }
+
+  const data = await resp.json();
+  if (data.error) throw new Error('Claude API: ' + data.error.message);
+
+  const text = (data.content || []).map(i => i.text || '').join('');
+  setProgress('Парсинг результату...', 95);
 
   const parsed = extractJSON(text);
-  if (!parsed) throw new Error('Не знайдено JSON. Claude відповів: ' + text.slice(0, 200));
+  if (!parsed) throw new Error('Не знайдено JSON у відповіді Claude: ' + text.slice(0, 150));
   if (!Array.isArray(parsed.rows)) parsed.rows = [];
 
   return { ...parsed, fileName: file.name };
-}
+
 
 // ── Handle PDF upload ─────────────────────────────────────────────────────────
 async function handlePdfs(fileList) {
