@@ -616,8 +616,13 @@ function extractArray(text) {
 
 // ── Parse single PDF ──────────────────────────────────────────────────────────
 async function parsePdf(file) {
-  const ab = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  const ab = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => res(e.target.result);
+    reader.onerror = rej;
+    reader.readAsArrayBuffer(file);
+  });
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(ab) }).promise;
   const total = pdf.numPages;
 
   const P1_PROMPT = `Це сторінка відомості ПФУ на виплату пенсій. Поверни ТІЛЬКИ JSON без тексту навколо:
