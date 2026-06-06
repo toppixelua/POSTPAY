@@ -572,13 +572,11 @@ async function askClaude(b64, mediaType, prompt) {
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
     : { type: 'image',    source: { type: 'base64', media_type: mediaType,          data: b64 } };
 
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+  const resp = await fetch('https://postpay-proxy3.vercel.app/api/claude', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'pdfs-2024-09-25'
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
